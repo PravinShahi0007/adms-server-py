@@ -156,14 +156,14 @@ ORDER BY created_at DESC LIMIT 10;
 ### Quick Production Deploy Command
 
 ```bash
-ssh 10.5.11.254 'cd /home/supatpong/adms-server && git pull && sudo docker-compose down && sudo docker-compose build && sudo docker-compose -f docker-compose.prod.yml up -d'
+ssh 172.31.30.159 'cd /home/supatpong/adms-server && git pull && sudo docker-compose down && sudo docker-compose build && sudo mkdir -p /mnt/kpspdrive/attendance_photo && sudo chmod 755 /mnt/kpspdrive/attendance_photo && sudo docker-compose -f docker-compose.prod.yml up -d'
 ```
 
 ### Manual Production Deployment Steps
 
 1. SSH to production server:
 ```bash
-ssh 10.5.11.254
+ssh 172.31.30.159
 cd /home/supatpong/adms-server
 ```
 
@@ -177,6 +177,10 @@ sudo docker-compose down
 
 # Rebuild images with latest code
 sudo docker-compose build
+
+# Create and set permissions for NAS photo storage
+sudo mkdir -p /mnt/kpspdrive/attendance_photo
+sudo chmod 755 /mnt/kpspdrive/attendance_photo
 
 # Start production services
 sudo docker-compose -f docker-compose.prod.yml up -d

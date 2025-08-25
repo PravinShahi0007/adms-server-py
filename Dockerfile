@@ -18,7 +18,7 @@ COPY . .
 # Create logs and photos directories
 RUN mkdir -p logs photos
 
-# Create non-root user
+# Create non-root user and set ownership
 RUN adduser --disabled-password --gecos '' appuser && \
     chown -R appuser:appuser /app
 USER appuser
