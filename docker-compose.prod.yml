@@ -18,7 +18,7 @@ services:
     volumes:
       - ./logs:/app/logs
       - /mnt/kpspdrive/attendance_photo:/app/photos
-    restart: unless-stopped
+    restart: always
     networks:
       - adms_network
 
@@ -39,7 +39,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
+    restart: always
     networks:
       - adms_network
 
@@ -52,7 +52,7 @@ services:
       ADMINER_DEFAULT_SERVER: db
     depends_on:
       - db
-    restart: unless-stopped
+    restart: always
     networks:
       - adms_network
 
