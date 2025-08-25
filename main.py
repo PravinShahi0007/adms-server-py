@@ -10,8 +10,40 @@ from database import get_db, create_tables
 from models import Device, AttendanceRecord, DeviceLog
 from starlette.middleware.base import BaseHTTPMiddleware
 import traceback
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="ZKTeco ADMS Push Server", version="1.0.0")
+# Lifespan event handler for startup/shutdown
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    import time
+    max_retries = 30
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            create_tables()
+            break
+        except Exception as e:
+            retry_count += 1
+            logger.warning(f"Database connection failed (attempt {retry_count}/{max_retries}): {e}")
+            if retry_count >= max_retries:
+                logger.error("Failed to connect to database after maximum retries")
+                raise
+            time.sleep(2)
+    
+    if COMM_KEY:
+        logger.info("COMM_KEY authentication enabled")
+    else:
+        logger.info("No COMM_KEY - authentication disabled")
+    logger.info("Database tables created successfully")
+    
+    yield
+    
+    # Shutdown (if needed)
+    logger.info("ZKTeco ADMS Push Server shutting down")
+
+app = FastAPI(title="ZKTeco ADMS Push Server", version="1.0.0", lifespan=lifespan)
 
 # Request logging middleware
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -77,29 +109,6 @@ def validate_comm_key(request: Request) -> bool:
     request_key = request.query_params.get("key") or request.headers.get("X-Comm-Key")
     return request_key == COMM_KEY
 
-@app.on_event("startup")
-async def startup_event():
-    import time
-    max_retries = 30
-    retry_count = 0
-    
-    while retry_count < max_retries:
-        try:
-            create_tables()
-            break
-        except Exception as e:
-            retry_count += 1
-            logger.warning(f"Database connection failed (attempt {retry_count}/{max_retries}): {e}")
-            if retry_count >= max_retries:
-                logger.error("Failed to connect to database after maximum retries")
-                raise
-            time.sleep(2)
-    
-    if COMM_KEY:
-        logger.info("COMM_KEY authentication enabled")
-    else:
-        logger.info("No COMM_KEY - authentication disabled")
-    logger.info("Database tables created successfully")
 
 @app.get("/iclock/getrequest")
 async def get_request(request: Request, SN: Optional[str] = None, db: Session = Depends(get_db)):
