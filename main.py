@@ -185,6 +185,46 @@ async def cdata(request: Request, SN: Optional[str] = None, db: Session = Depend
     
     return PlainTextResponse("OK")
 
+@app.post("/iclock/fdata")
+async def fdata(request: Request, SN: Optional[str] = None, table: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Handle file data upload from device (photos, etc.)
+    Device calls this to upload photos and other file data
+    """
+    raw_data = await request.body()
+    client_ip = request.client.host
+    
+    logger.info(f"Received file data: {len(raw_data)} bytes from {client_ip}, table={table}, SN={SN}")
+    
+    device_serial = SN or extract_device_serial(request)
+    
+    try:
+        if table == "ATTPHOTO":
+            # Parse photo upload data
+            data_text = raw_data.decode('utf-8', errors='replace')
+            lines = data_text.split('\n')
+            
+            photo_info = {}
+            for line in lines[:4]:  # First few lines contain metadata
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                    photo_info[key] = value
+            
+            logger.info(f"Photo upload from {device_serial}: {photo_info.get('PIN', 'unknown')}")
+            
+            # Log photo upload event
+            log_device_event(db, device_serial, "photo_upload", client_ip, 
+                           f"Uploaded photo: {photo_info.get('PIN', 'unknown')}")
+            
+        else:
+            logger.info(f"Unhandled file data table: {table}")
+            
+    except Exception as e:
+        logger.error(f"Error processing file data: {e}")
+        log_device_event(db, device_serial, "error", client_ip, str(e))
+    
+    return PlainTextResponse("OK")
+
 @app.get("/iclock/register")
 @app.post("/iclock/register")
 async def register(request: Request, SN: Optional[str] = None, db: Session = Depends(get_db)):
