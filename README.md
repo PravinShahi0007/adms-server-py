@@ -183,7 +183,7 @@ sudo mkdir -p /mnt/kpspdrive/attendance_photo
 sudo chmod 755 /mnt/kpspdrive/attendance_photo
 
 # Start production services
-sudo docker-compose -f docker-compose.prod.yml up -d
+sudo docker-compose -f docker-compose.prod.yml up -d --build
 ```
 
 3. Verify deployment:

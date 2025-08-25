@@ -137,7 +137,7 @@ def main():
     if len(sys.argv) > 1:
         file_path = sys.argv[1]
     else:
-        file_path = "/app/attdance.txt"  # Default path in container
+        file_path = "/app/employee_data.txt"  # Default path in container
     
     import_employees_from_file(file_path)
 
