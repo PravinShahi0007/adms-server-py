@@ -407,10 +407,10 @@ if __name__ == "__main__":
     logger.info("Starting ZKTeco ADMS Push Server with enhanced logging")
     
     # Start TCP debug server in background
-    tcp_thread = threading.Thread(target=start_tcp_server, args=(8081,))
+    tcp_thread = threading.Thread(target=start_tcp_server, args=(8082,))
     tcp_thread.daemon = True
     tcp_thread.start()
-    logger.info("TCP debug server started on port 8081")
+    logger.info("TCP debug server started on port 8082")
     
     uvicorn.run(
         app, 

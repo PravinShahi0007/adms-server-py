@@ -6,7 +6,7 @@ services:
     container_name: zkteco-adms-app
     ports:
       - "8080:8080"
-      - "8081:8081"
+      - "8082:8082"
     environment:
       - DATABASE_URL=postgresql://adms_user:adms_password@db:5432/adms_db
       - INTERNAL_API_URL=http://localhost:3000
