@@ -1,5 +1,7 @@
 # ZKTeco ADMS Push Server
 
+📖 **[English](README.md)** | 🇹🇭 **[ไทย](README.th.md)**
+
 FastAPI server for receiving attendance data from ZKTeco devices using Push/ADMS mode with PostgreSQL database.
 
 ## Features
