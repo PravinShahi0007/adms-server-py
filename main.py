@@ -8,12 +8,62 @@ import os
 from sqlalchemy.orm import Session
 from database import get_db, create_tables
 from models import Device, AttendanceRecord, DeviceLog
+from starlette.middleware.base import BaseHTTPMiddleware
+import traceback
 
 app = FastAPI(title="ZKTeco ADMS Push Server", version="1.0.0")
 
+# Request logging middleware
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start_time = datetime.now()
+        client_ip = request.client.host if request.client else "unknown"
+        
+        try:
+            # Log all incoming requests
+            method = request.method
+            url = str(request.url)
+            headers = dict(request.headers)
+            
+            # Log basic request info
+            logger.info(f"[{client_ip}] {method} {url}")
+            logger.debug(f"[{client_ip}] Headers: {headers}")
+            
+            # Process request
+            response = await call_next(request)
+            
+            # Log response
+            duration = (datetime.now() - start_time).total_seconds() * 1000
+            logger.info(f"[{client_ip}] {method} {url} -> {response.status_code} ({duration:.2f}ms)")
+            
+            return response
+            
+        except Exception as e:
+            duration = (datetime.now() - start_time).total_seconds() * 1000
+            logger.error(f"[{client_ip}] {method} {url} -> ERROR ({duration:.2f}ms): {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
+
+# Add the middleware
+app.add_middleware(RequestLoggingMiddleware)
+
 log_level = os.getenv("LOG_LEVEL", "INFO")
-logging.basicConfig(level=getattr(logging, log_level.upper()))
+
+# Enhanced logging configuration
+logging.basicConfig(
+    level=getattr(logging, log_level.upper()),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 logger = logging.getLogger(__name__)
+
+# Set uvicorn logger to show more details
+uvicorn_logger = logging.getLogger("uvicorn")
+uvicorn_logger.setLevel(logging.DEBUG)
+
+# Log invalid HTTP requests from uvicorn
+uvicorn_access_logger = logging.getLogger("uvicorn.access")
+uvicorn_access_logger.setLevel(logging.INFO)
 
 INTERNAL_API_URL = os.getenv("INTERNAL_API_URL", "http://localhost:3000")
 COMM_KEY = os.getenv("COMM_KEY", "")
@@ -271,6 +321,27 @@ def log_device_event(db: Session, device_serial: str, event_type: str,
     except Exception as e:
         logger.error(f"Failed to log device event: {e}")
 
+# Custom exception handler for invalid HTTP requests
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    client_ip = request.client.host if request.client else "unknown"
+    logger.error(f"[{client_ip}] Unhandled exception: {exc}")
+    logger.error(f"Request URL: {request.url}")
+    logger.error(f"Request method: {request.method}")
+    logger.error(f"Request headers: {dict(request.headers)}")
+    logger.error(f"Traceback: {traceback.format_exc()}")
+    
+    return PlainTextResponse("Internal Server Error", status_code=500)
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
+    
+    logger.info("Starting ZKTeco ADMS Push Server with enhanced logging")
+    
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=8080, 
+        log_level="info",
+        access_log=True
+    )
