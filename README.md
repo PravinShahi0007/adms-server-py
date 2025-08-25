@@ -153,41 +153,70 @@ ORDER BY created_at DESC LIMIT 10;
 
 ## Production Deployment
 
-### Environment Configuration
+### Quick Production Deploy Command
 
-Create `.env` file (copy from `.env.example`):
 ```bash
-cp .env.example .env
-# Edit .env with your settings
+ssh 10.5.11.254 'cd /home/supatpong/adms-server && git pull && sudo docker-compose down && sudo docker-compose build && sudo docker-compose -f docker-compose.prod.yml up -d'
 ```
 
-### Production Docker Compose
+### Manual Production Deployment Steps
 
-```yaml
-# docker-compose.prod.yml
-version: '3.8'
-services:
-  app:
-    build: .
-    environment:
-      - DATABASE_URL=postgresql://user:password@db:5432/adms_db
-      - INTERNAL_API_URL=https://your-api.com
-      - LOG_LEVEL=INFO
-    ports:
-      - "8080:8080"
-    restart: always
-    depends_on:
-      - db
-  
-  db:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_DB: adms_db
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: strong_password
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: always
+1. SSH to production server:
+```bash
+ssh 10.5.11.254
+cd /home/supatpong/adms-server
+```
+
+2. Update and deploy:
+```bash
+# Pull latest changes
+git pull
+
+# Stop current services
+sudo docker-compose down
+
+# Rebuild images with latest code
+sudo docker-compose build
+
+# Start production services
+sudo docker-compose -f docker-compose.prod.yml up -d
+```
+
+3. Verify deployment:
+```bash
+# Check container status
+sudo docker-compose -f docker-compose.prod.yml ps
+
+# View logs
+sudo docker-compose -f docker-compose.prod.yml logs -f app
+
+# Test health endpoint
+curl http://localhost:8080/health
+```
+
+### Environment Configuration
+
+**Local Development** (`docker-compose.yml`):
+- Environment: `ENVIRONMENT=local`
+- Photo storage: `./photos` (local directory)
+- Database: Development PostgreSQL
+
+**Production** (`docker-compose.prod.yml`):
+- Environment: `ENVIRONMENT=production`
+- Photo storage: `/mnt/kpspdrive/attendance_photo` (NAS storage)
+- Database: Production PostgreSQL
+
+### Photo Storage Structure
+
+Photos are automatically organized by device and date:
+```
+photos/
+├── WAE4242800114/           # Device serial number
+│   ├── 2025-08-25/         # Date folder
+│   │   ├── 20250825173554-02.jpg
+│   │   └── 20250825173600-02.jpg
+│   └── 2025-08-26/
+└── OTHER_DEVICE_SN/
 ```
 
 ## Environment Variables
