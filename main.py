@@ -1,0 +1,261 @@
+from fastapi import FastAPI, Request, Response, Depends
+from fastapi.responses import PlainTextResponse
+import httpx
+import logging
+from datetime import datetime
+from typing import Optional
+import os
+from sqlalchemy.orm import Session
+from database import get_db, create_tables
+from models import Device, AttendanceRecord, DeviceLog
+
+app = FastAPI(title="ZKTeco ADMS Push Server", version="1.0.0")
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+logging.basicConfig(level=getattr(logging, log_level.upper()))
+logger = logging.getLogger(__name__)
+
+INTERNAL_API_URL = os.getenv("INTERNAL_API_URL", "http://localhost:3000")
+COMM_KEY = os.getenv("COMM_KEY", "")
+
+def validate_comm_key(request: Request) -> bool:
+    """Validate communication key if configured"""
+    if not COMM_KEY:  # No key required
+        return True
+    
+    # Check key in query parameters or headers
+    request_key = request.query_params.get("key") or request.headers.get("X-Comm-Key")
+    return request_key == COMM_KEY
+
+@app.on_event("startup")
+async def startup_event():
+    create_tables()
+    if COMM_KEY:
+        logger.info("COMM_KEY authentication enabled")
+    else:
+        logger.info("No COMM_KEY - authentication disabled")
+    logger.info("Database tables created successfully")
+
+@app.get("/iclock/getrequest")
+async def get_request(request: Request, SN: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Handle device heartbeat and command requests
+    Device periodically calls this to check for pending commands
+    """
+    logger.info(f"Device heartbeat from SN: {SN}")
+    client_ip = request.client.host
+    
+    # Log device activity
+    log_device_event(db, SN, "heartbeat", client_ip, f"Heartbeat from {SN}")
+    
+    # Update device last seen
+    if SN:
+        update_device_heartbeat(db, SN, client_ip)
+    
+    return PlainTextResponse("OK")
+
+@app.post("/iclock/cdata")
+async def cdata(request: Request, SN: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Handle attendance data upload from device
+    Receives ATTLOG records in plain text format
+    """
+    raw_data = await request.body()
+    data_text = raw_data.decode('utf-8')
+    client_ip = request.client.host
+    
+    logger.info(f"Received attendance data: {len(data_text)} bytes from {client_ip}")
+    logger.debug(f"Raw data: {data_text}")
+    
+    device_serial = SN or extract_device_serial(request)
+    
+    try:
+        # Parse and save attendance records
+        records = parse_attlog_data(data_text)
+        logger.info(f"Parsed {len(records)} attendance records")
+        
+        if records:
+            saved_count = save_attendance_records(db, records, device_serial, data_text)
+            logger.info(f"Saved {saved_count} new attendance records")
+            
+            # Log successful data upload
+            log_device_event(db, device_serial, "data_upload", client_ip, 
+                           f"Uploaded {len(records)} records")
+            
+            # Forward to internal API
+            await forward_to_internal_api(records)
+            
+    except Exception as e:
+        logger.error(f"Error processing attendance data: {e}")
+        log_device_event(db, device_serial, "error", client_ip, str(e))
+    
+    return PlainTextResponse("OK")
+
+@app.get("/iclock/register")
+@app.post("/iclock/register")
+async def register(request: Request, SN: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Handle device registration
+    Device calls this when it starts up or reconnects
+    """
+    logger.info(f"Device registration from SN: {SN}")
+    client_ip = request.client.host
+    
+    # Register or update device
+    if SN:
+        register_device(db, SN, client_ip)
+        log_device_event(db, SN, "register", client_ip, f"Device registered")
+    
+    return PlainTextResponse("OK")
+
+def parse_attlog_data(data_text: str) -> list:
+    """
+    Parse ATTLOG data format:
+    ATTLOG\tuser_id\ttimestamp\tverify_mode\tin_out\tworkcode
+    """
+    records = []
+    
+    for line in data_text.strip().split('\n'):
+        if not line.strip() or not line.startswith('ATTLOG'):
+            continue
+            
+        try:
+            parts = line.split('\t')
+            if len(parts) >= 6:
+                record = {
+                    'user_id': parts[1],
+                    'timestamp': parts[2], 
+                    'verify_mode': int(parts[3]),
+                    'in_out': int(parts[4]),
+                    'workcode': parts[5] if parts[5] else '0'
+                }
+                records.append(record)
+                logger.debug(f"Parsed record: {record}")
+        except (ValueError, IndexError) as e:
+            logger.warning(f"Failed to parse line: {line}, error: {e}")
+            
+    return records
+
+async def forward_to_internal_api(records: list):
+    """
+    Forward parsed attendance records to internal API
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{INTERNAL_API_URL}/api/attendance/bulk",
+                json={
+                    "records": records,
+                    "timestamp": datetime.now().isoformat(),
+                    "source": "zkteco_push"
+                },
+                timeout=10.0
+            )
+            response.raise_for_status()
+            logger.info(f"Successfully forwarded {len(records)} records to internal API")
+    except Exception as e:
+        logger.error(f"Failed to forward to internal API: {e}")
+        # Don't raise - we still want to return OK to the device
+
+@app.get("/health")
+async def health_check(db: Session = Depends(get_db)):
+    """Health check endpoint"""
+    try:
+        # Test database connection
+        from sqlalchemy import text
+        db.execute(text("SELECT 1"))
+        db_status = "healthy"
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        db_status = "unhealthy"
+    
+    return {
+        "status": "healthy" if db_status == "healthy" else "unhealthy",
+        "database": db_status,
+        "timestamp": datetime.now().isoformat()
+    }
+
+def extract_device_serial(request: Request) -> Optional[str]:
+    """Extract device serial number from request"""
+    return request.query_params.get("SN")
+
+def register_device(db: Session, serial_number: str, ip_address: str):
+    """Register or update device information"""
+    device = db.query(Device).filter(Device.serial_number == serial_number).first()
+    
+    if device:
+        device.ip_address = ip_address
+        device.last_heartbeat = datetime.now()
+        device.is_active = True
+        device.updated_at = datetime.now()
+    else:
+        device = Device(
+            serial_number=serial_number,
+            ip_address=ip_address,
+            last_heartbeat=datetime.now(),
+            is_active=True
+        )
+        db.add(device)
+    
+    db.commit()
+    logger.info(f"Device {serial_number} registered/updated")
+
+def update_device_heartbeat(db: Session, serial_number: str, ip_address: str):
+    """Update device heartbeat timestamp"""
+    device = db.query(Device).filter(Device.serial_number == serial_number).first()
+    
+    if device:
+        device.last_heartbeat = datetime.now()
+        device.ip_address = ip_address
+        device.is_active = True
+        db.commit()
+
+def save_attendance_records(db: Session, records: list, device_serial: str, raw_data: str) -> int:
+    """Save attendance records to database"""
+    saved_count = 0
+    
+    for record in records:
+        try:
+            # Check for duplicate record
+            existing = db.query(AttendanceRecord).filter(
+                AttendanceRecord.device_serial == device_serial,
+                AttendanceRecord.user_id == record['user_id'],
+                AttendanceRecord.timestamp == datetime.fromisoformat(record['timestamp'].replace(' ', 'T'))
+            ).first()
+            
+            if not existing:
+                attendance_record = AttendanceRecord(
+                    device_serial=device_serial,
+                    user_id=record['user_id'],
+                    timestamp=datetime.fromisoformat(record['timestamp'].replace(' ', 'T')),
+                    verify_mode=record['verify_mode'],
+                    in_out=record['in_out'],
+                    workcode=record['workcode'],
+                    raw_data=raw_data
+                )
+                db.add(attendance_record)
+                saved_count += 1
+        except Exception as e:
+            logger.error(f"Failed to save attendance record: {e}")
+    
+    db.commit()
+    return saved_count
+
+def log_device_event(db: Session, device_serial: str, event_type: str, 
+                    ip_address: str, message: str):
+    """Log device events"""
+    try:
+        device_log = DeviceLog(
+            device_serial=device_serial or "unknown",
+            event_type=event_type,
+            ip_address=ip_address,
+            message=message
+        )
+        db.add(device_log)
+        db.commit()
+    except Exception as e:
+        logger.error(f"Failed to log device event: {e}")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
