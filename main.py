@@ -29,7 +29,22 @@ def validate_comm_key(request: Request) -> bool:
 
 @app.on_event("startup")
 async def startup_event():
-    create_tables()
+    import time
+    max_retries = 30
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            create_tables()
+            break
+        except Exception as e:
+            retry_count += 1
+            logger.warning(f"Database connection failed (attempt {retry_count}/{max_retries}): {e}")
+            if retry_count >= max_retries:
+                logger.error("Failed to connect to database after maximum retries")
+                raise
+            time.sleep(2)
+    
     if COMM_KEY:
         logger.info("COMM_KEY authentication enabled")
     else:

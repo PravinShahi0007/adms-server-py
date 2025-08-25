@@ -1,4 +1,4 @@
-version: '3.3'
+version: '3.7'
 
 services:
   app:
@@ -11,8 +11,7 @@ services:
       - INTERNAL_API_URL=http://localhost:3000
       - LOG_LEVEL=INFO
     depends_on:
-      db:
-        condition: service_healthy
+      - db
     volumes:
       - ./logs:/app/logs
     restart: unless-stopped
