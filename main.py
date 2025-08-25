@@ -57,9 +57,29 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             url = str(request.url)
             headers = dict(request.headers)
             
-            # Log basic request info
+            # Read request body for detailed logging
+            body = b""
+            if request.method in ["POST", "PUT", "PATCH"]:
+                try:
+                    body = await request.body()
+                    # Recreate request with body for downstream processing
+                    async def receive():
+                        return {"type": "http.request", "body": body}
+                    request._receive = receive
+                except Exception as e:
+                    logger.warning(f"[{client_ip}] Could not read request body: {e}")
+            
+            # Enhanced logging for all requests
             logger.info(f"[{client_ip}] {method} {url}")
-            logger.debug(f"[{client_ip}] Headers: {headers}")
+            logger.info(f"[{client_ip}] Headers: {headers}")
+            
+            if body:
+                # Log body content safely
+                try:
+                    body_text = body.decode('utf-8', errors='replace')
+                    logger.info(f"[{client_ip}] Body ({len(body)} bytes): {repr(body_text[:500])}")
+                except Exception:
+                    logger.info(f"[{client_ip}] Body ({len(body)} bytes): [binary data]")
             
             # Process request
             response = await call_next(request)
@@ -334,13 +354,50 @@ def log_device_event(db: Session, device_serial: str, event_type: str,
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     client_ip = request.client.host if request.client else "unknown"
+    
+    # Try to get request body for debugging
+    try:
+        body = await request.body()
+        body_text = body.decode('utf-8', errors='replace') if body else ""
+    except Exception:
+        body_text = "[Could not read body]"
+    
     logger.error(f"[{client_ip}] Unhandled exception: {exc}")
-    logger.error(f"Request URL: {request.url}")
-    logger.error(f"Request method: {request.method}")
-    logger.error(f"Request headers: {dict(request.headers)}")
-    logger.error(f"Traceback: {traceback.format_exc()}")
+    logger.error(f"[{client_ip}] Request URL: {request.url}")
+    logger.error(f"[{client_ip}] Request method: {request.method}")
+    logger.error(f"[{client_ip}] Request headers: {dict(request.headers)}")
+    logger.error(f"[{client_ip}] Request body: {repr(body_text[:500])}")
+    logger.error(f"[{client_ip}] Traceback: {traceback.format_exc()}")
     
     return PlainTextResponse("Internal Server Error", status_code=500)
+
+# Add catch-all route to log unmatched requests
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"], include_in_schema=False)
+async def catch_all(request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    method = request.method
+    path = request.url.path
+    query = str(request.query_params)
+    headers = dict(request.headers)
+    
+    # Get request body
+    try:
+        body = await request.body()
+        body_text = body.decode('utf-8', errors='replace') if body else ""
+    except Exception:
+        body_text = "[Could not read body]"
+    
+    logger.warning(f"[{client_ip}] UNMATCHED ROUTE: {method} {path}")
+    logger.warning(f"[{client_ip}] Query params: {query}")
+    logger.warning(f"[{client_ip}] Headers: {headers}")
+    if body_text:
+        logger.warning(f"[{client_ip}] Body: {repr(body_text[:500])}")
+    
+    # Check if it looks like a ZKTeco request
+    if any(keyword in path.lower() for keyword in ['iclock', 'zkeco', 'attendance', 'device']):
+        logger.info(f"[{client_ip}] This looks like a ZKTeco device request!")
+    
+    return PlainTextResponse("Not Found", status_code=404)
 
 if __name__ == "__main__":
     import uvicorn
