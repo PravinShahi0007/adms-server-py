@@ -30,12 +30,16 @@ def handle_client(client_socket, client_address):
                 tls_version = f"{data[1]}.{data[2]}"
                 logger.info(f"[{client_address[0]}] TLS handshake detected (version {tls_version})")
                 logger.info(f"[{client_address[0]}] ZKTeco device trying HTTPS/SSL connection")
+                logger.warning(f"[{client_address[0]}] Device keeps trying SSL - please configure device to use HTTP instead")
                 
-                # Send SSL handshake failure - tell device to use HTTP instead
-                # SSL Alert: Handshake Failure (40)
-                ssl_alert = b'\x15\x03\x03\x00\x02\x02\x28'  # Alert protocol, handshake failure
-                client_socket.send(ssl_alert)
-                logger.info(f"[{client_address[0]}] Sent SSL handshake failure - device should fallback to HTTP")
+                # Try different approaches to make device fallback
+                # Option 1: Connection reset
+                try:
+                    # Send TCP RST to force connection close
+                    client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, b'\x01\x00\x00\x00')
+                    logger.info(f"[{client_address[0]}] Sent TCP RST to force reconnection")
+                except:
+                    pass
                 return
             
             # Check for HTTP-like patterns
