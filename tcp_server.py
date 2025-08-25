@@ -25,9 +25,26 @@ def handle_client(client_socket, client_address):
             except:
                 logger.info(f"[{client_address[0]}] Cannot decode as UTF-8")
             
+            # Check for SSL/TLS handshake
+            if data.startswith(b'\x16\x03'):
+                tls_version = f"{data[1]}.{data[2]}"
+                logger.info(f"[{client_address[0]}] TLS handshake detected (version {tls_version})")
+                logger.info(f"[{client_address[0]}] ZKTeco device trying HTTPS/SSL connection")
+                
+                # Send SSL handshake failure - tell device to use HTTP instead
+                # SSL Alert: Handshake Failure (40)
+                ssl_alert = b'\x15\x03\x03\x00\x02\x02\x28'  # Alert protocol, handshake failure
+                client_socket.send(ssl_alert)
+                logger.info(f"[{client_address[0]}] Sent SSL handshake failure - device should fallback to HTTP")
+                return
+            
             # Check for HTTP-like patterns
             if b'HTTP' in data or b'GET' in data or b'POST' in data:
                 logger.info(f"[{client_address[0]}] Looks like HTTP request")
+                # Simple HTTP response
+                response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
+                client_socket.send(response)
+                return
             
             # Check for ZKTeco patterns
             zkeco_patterns = [b'ZKECO', b'ATTLOG', b'iclock', b'SN=']
@@ -35,9 +52,12 @@ def handle_client(client_socket, client_address):
                 if pattern in data:
                     logger.info(f"[{client_address[0]}] Found ZKTeco pattern: {pattern}")
             
-            # Simple response
-            response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
-            client_socket.send(response)
+            # Generic response for unknown protocols
+            try:
+                response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
+                client_socket.send(response)
+            except:
+                logger.warning(f"[{client_address[0]}] Could not send response")
             
     except Exception as e:
         logger.error(f"Error handling client {client_address}: {e}")
