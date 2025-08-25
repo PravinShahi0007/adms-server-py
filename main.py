@@ -152,6 +152,25 @@ async def get_request(request: Request, SN: Optional[str] = None, db: Session = 
     
     return PlainTextResponse("OK")
 
+@app.get("/iclock/cdata")
+async def cdata_get(request: Request, SN: Optional[str] = None, options: Optional[str] = None, 
+                   language: Optional[str] = None, pushver: Optional[str] = None, 
+                   PushOptionsFlag: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Handle GET requests from ZKTeco devices (device registration/heartbeat)
+    """
+    client_ip = request.client.host
+    device_serial = SN
+    
+    logger.info(f"Device {device_serial} heartbeat from {client_ip}")
+    
+    if device_serial:
+        # Update device heartbeat
+        update_device_heartbeat(db, device_serial, client_ip)
+    
+    # Return OK response for device
+    return PlainTextResponse("OK")
+
 @app.post("/iclock/cdata")
 async def cdata(request: Request, SN: Optional[str] = None, db: Session = Depends(get_db)):
     """
