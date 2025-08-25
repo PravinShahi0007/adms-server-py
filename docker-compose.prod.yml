@@ -11,6 +11,8 @@ services:
       - INTERNAL_API_URL=http://localhost:3000
       - LOG_LEVEL=INFO
       - ENVIRONMENT=production
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_GROUP_CHAT_ID=${TELEGRAM_GROUP_CHAT_ID}
     depends_on:
       - db
     volumes:

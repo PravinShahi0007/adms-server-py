@@ -75,3 +75,22 @@ class ProcessingQueue(Base):
     __table_args__ = (
         Index('idx_queue_status_created', 'status', 'created_at'),
     )
+
+class Employee(Base):
+    __tablename__ = "employees"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(50), unique=True, index=True, nullable=False)  # Employee ID from ZKTeco
+    name = Column(String(200), nullable=False)
+    department = Column(String(100))
+    position = Column(String(100))
+    phone = Column(String(20))
+    email = Column(String(100))
+    telegram_chat_id = Column(String(50))  # For personal notifications
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    __table_args__ = (
+        Index('idx_employee_user_id', 'user_id', 'is_active'),
+    )

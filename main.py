@@ -7,7 +7,8 @@ from typing import Optional
 import os
 from sqlalchemy.orm import Session
 from database import get_db, create_tables
-from models import Device, AttendanceRecord, DeviceLog
+from models import Device, AttendanceRecord, DeviceLog, Employee
+from telegram_notify import TelegramNotifier
 from starlette.middleware.base import BaseHTTPMiddleware
 import traceback
 from contextlib import asynccontextmanager
@@ -44,6 +45,9 @@ async def lifespan(app: FastAPI):
     logger.info("ZKTeco ADMS Push Server shutting down")
 
 app = FastAPI(title="ZKTeco ADMS Push Server", version="1.0.0", lifespan=lifespan)
+
+# Initialize Telegram notifier
+telegram_notifier = TelegramNotifier()
 
 # Request logging middleware
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -169,7 +173,7 @@ async def cdata(request: Request, SN: Optional[str] = None, db: Session = Depend
         logger.info(f"Parsed {len(records)} attendance records")
         
         if records:
-            saved_count = save_attendance_records(db, records, device_serial, data_text)
+            saved_count = await save_attendance_records(db, records, device_serial, data_text)
             logger.info(f"Saved {saved_count} new attendance records")
             
             # Log successful data upload
@@ -369,8 +373,8 @@ def update_device_heartbeat(db: Session, serial_number: str, ip_address: str):
         device.is_active = True
         db.commit()
 
-def save_attendance_records(db: Session, records: list, device_serial: str, raw_data: str) -> int:
-    """Save attendance records to database"""
+async def save_attendance_records(db: Session, records: list, device_serial: str, raw_data: str) -> int:
+    """Save attendance records to database and send Telegram notifications"""
     saved_count = 0
     
     for record in records:
@@ -394,11 +398,64 @@ def save_attendance_records(db: Session, records: list, device_serial: str, raw_
                 )
                 db.add(attendance_record)
                 saved_count += 1
+                
+                # Send Telegram notification for new attendance record
+                try:
+                    await telegram_notifier.send_attendance_notification(
+                        db=db,
+                        user_id=record['user_id'],
+                        device_serial=device_serial,
+                        timestamp=datetime.fromisoformat(record['timestamp'].replace(' ', 'T')),
+                        in_out=record['in_out'],
+                        verify_mode=record['verify_mode'],
+                        photo_path=find_latest_photo(device_serial, record['user_id'], record['timestamp'])
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send Telegram notification: {e}")
+                    
         except Exception as e:
             logger.error(f"Failed to save attendance record: {e}")
     
     db.commit()
     return saved_count
+
+def find_latest_photo(device_serial: str, user_id: str, timestamp_str: str) -> Optional[str]:
+    """Find the most recent photo for a user around the time of attendance"""
+    try:
+        # Parse timestamp
+        attendance_time = datetime.fromisoformat(timestamp_str.replace(' ', 'T'))
+        date_str = attendance_time.strftime("%Y-%m-%d")
+        
+        # Check photos directory
+        env = os.getenv("ENVIRONMENT", "local")
+        if env == "production":
+            photo_base = "/app/photos"
+        else:
+            photo_base = "/app/photos"
+            
+        photo_dir = f"{photo_base}/{device_serial}/{date_str}"
+        
+        if not os.path.exists(photo_dir):
+            return None
+            
+        # Look for photos taken around the same time
+        import glob
+        photos = glob.glob(f"{photo_dir}/*{user_id}*.jpg")
+        
+        if not photos:
+            # Look for any photo taken around the same time (within 1 minute)
+            attendance_time_str = attendance_time.strftime("%Y%m%d%H%M")
+            photos = glob.glob(f"{photo_dir}/{attendance_time_str}*.jpg")
+            
+        if photos:
+            # Return the most recent photo
+            photos.sort(key=os.path.getmtime, reverse=True)
+            return photos[0]
+            
+        return None
+    except Exception as e:
+        logger.error(f"Error finding photo: {e}")
+        return None
 
 async def save_photo_file(raw_data: bytes, device_serial: str, photo_filename: str, photo_info: dict) -> Optional[str]:
     """Save photo file to NAS storage"""

@@ -231,6 +231,52 @@ photos/
 | `INTERNAL_API_URL` | Your internal API endpoint | `http://localhost:3000` |
 | `COMM_KEY` | Device communication key | `""` |
 | `LOG_LEVEL` | Logging level | `INFO` |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token for notifications | `""` |
+| `TELEGRAM_GROUP_CHAT_ID` | Telegram group chat ID | `""` |
+
+## Telegram Notifications
+
+### Setup Telegram Bot
+
+1. **Create a Bot:**
+   - Message @BotFather on Telegram
+   - Use `/newbot` command
+   - Get your bot token
+
+2. **Get Group Chat ID:**
+   - Add bot to your group
+   - Send a message in the group
+   - Visit: `https://api.telegram.org/bot<TOKEN>/getUpdates`
+   - Find your group chat ID (negative number)
+
+3. **Configure Environment:**
+   ```bash
+   TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+   TELEGRAM_GROUP_CHAT_ID=-123456789
+   ```
+
+### Employee Management
+
+Add employees to receive notifications:
+
+```bash
+# Add employee
+python employee_manager.py add "01" "John Doe" "IT" "Developer" "+66812345678" "john@company.com"
+
+# List employees  
+python employee_manager.py list
+
+# Delete employee
+python employee_manager.py delete "01"
+```
+
+### Notification Features
+
+- ✅ **Group Notifications:** All attendance events sent to group chat
+- ✅ **Personal Notifications:** Optional personal messages to employees  
+- ✅ **Photo Attachments:** Attendance photos sent with notifications
+- ✅ **Rich Messages:** Formatted messages with employee details
+- ✅ **Multi-language:** Thai language support
 
 ## Monitoring & Logging
 
