@@ -210,11 +210,19 @@ async def fdata(request: Request, SN: Optional[str] = None, table: Optional[str]
                     key, value = line.split('=', 1)
                     photo_info[key] = value
             
-            logger.info(f"Photo upload from {device_serial}: {photo_info.get('PIN', 'unknown')}")
+            photo_filename = photo_info.get('PIN', 'unknown')
+            logger.info(f"Photo upload from {device_serial}: {photo_filename}")
             
-            # Log photo upload event
-            log_device_event(db, device_serial, "photo_upload", client_ip, 
-                           f"Uploaded photo: {photo_info.get('PIN', 'unknown')}")
+            # Save photo to NAS storage
+            saved_path = await save_photo_file(raw_data, device_serial, photo_filename, photo_info)
+            
+            if saved_path:
+                logger.info(f"Photo saved to: {saved_path}")
+                log_device_event(db, device_serial, "photo_upload", client_ip, 
+                               f"Uploaded and saved photo: {photo_filename} -> {saved_path}")
+            else:
+                log_device_event(db, device_serial, "photo_upload_failed", client_ip, 
+                               f"Failed to save photo: {photo_filename}")
             
         else:
             logger.info(f"Unhandled file data table: {table}")
@@ -245,17 +253,21 @@ async def register(request: Request, SN: Optional[str] = None, db: Session = Dep
 def parse_attlog_data(data_text: str) -> list:
     """
     Parse ATTLOG data format:
-    ATTLOG\tuser_id\ttimestamp\tverify_mode\tin_out\tworkcode
+    Two formats supported:
+    1. ATTLOG\tuser_id\ttimestamp\tverify_mode\tin_out\tworkcode
+    2. user_id\ttimestamp\tverify_mode\tin_out\tworkcode\t... (direct format)
     """
     records = []
     
     for line in data_text.strip().split('\n'):
-        if not line.strip() or not line.startswith('ATTLOG'):
+        if not line.strip():
             continue
             
         try:
             parts = line.split('\t')
-            if len(parts) >= 6:
+            
+            # Check if line starts with ATTLOG
+            if line.startswith('ATTLOG') and len(parts) >= 6:
                 record = {
                     'user_id': parts[1],
                     'timestamp': parts[2], 
@@ -264,7 +276,20 @@ def parse_attlog_data(data_text: str) -> list:
                     'workcode': parts[5] if parts[5] else '0'
                 }
                 records.append(record)
-                logger.debug(f"Parsed record: {record}")
+                logger.debug(f"Parsed ATTLOG record: {record}")
+                
+            # Handle direct format: user_id\ttimestamp\tverify_mode\tin_out\tworkcode\t...
+            elif len(parts) >= 5 and not line.startswith('ATTLOG'):
+                record = {
+                    'user_id': parts[0],
+                    'timestamp': parts[1], 
+                    'verify_mode': int(parts[2]),
+                    'in_out': int(parts[3]),
+                    'workcode': parts[4] if parts[4] else '0'
+                }
+                records.append(record)
+                logger.debug(f"Parsed direct record: {record}")
+                
         except (ValueError, IndexError) as e:
             logger.warning(f"Failed to parse line: {line}, error: {e}")
             
@@ -374,6 +399,60 @@ def save_attendance_records(db: Session, records: list, device_serial: str, raw_
     
     db.commit()
     return saved_count
+
+async def save_photo_file(raw_data: bytes, device_serial: str, photo_filename: str, photo_info: dict) -> Optional[str]:
+    """Save photo file to NAS storage"""
+    import re
+    
+    try:
+        # Find where JPEG data starts (after metadata lines)
+        data_text = raw_data.decode('utf-8', errors='ignore')
+        jpeg_start = data_text.find('\x00\xff\xd8\xff')  # JPEG file signature
+        
+        if jpeg_start == -1:
+            # Alternative search for JPEG header
+            jpeg_start = raw_data.find(b'\xff\xd8\xff')
+            if jpeg_start != -1:
+                jpeg_data = raw_data[jpeg_start:]
+            else:
+                logger.error(f"Could not find JPEG data in photo upload")
+                return None
+        else:
+            jpeg_data = raw_data[jpeg_start + 1:]  # Skip the null byte
+        
+        # Create directory structure: photos/device_serial/YYYY-MM-DD/
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        # Use different photo storage path based on environment
+        env = os.getenv("ENVIRONMENT", "local")
+        if env == "production":
+            photo_base = "/app/photos"  # Maps to /mnt/kpspdrive/attendance_photo
+        else:
+            photo_base = "/app/photos"  # Maps to ./photos for local
+            
+        photo_dir = f"{photo_base}/{device_serial}/{today}"
+        
+        # Create directory if it doesn't exist
+        os.makedirs(photo_dir, exist_ok=True)
+        
+        # Clean filename for filesystem
+        safe_filename = re.sub(r'[^\w\-_.]', '_', photo_filename)
+        if not safe_filename.lower().endswith('.jpg'):
+            safe_filename += '.jpg'
+        
+        photo_path = f"{photo_dir}/{safe_filename}"
+        
+        # Save JPEG data to file
+        with open(photo_path, 'wb') as f:
+            f.write(jpeg_data)
+        
+        logger.info(f"Saved photo: {photo_path} ({len(jpeg_data)} bytes)")
+        return photo_path
+        
+    except Exception as e:
+        logger.error(f"Failed to save photo file: {e}")
+        return None
 
 def log_device_event(db: Session, device_serial: str, event_type: str, 
                     ip_address: str, message: str):
