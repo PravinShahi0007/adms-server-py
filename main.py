@@ -477,8 +477,8 @@ async def send_smart_notification(
         )
     else:
         # No photo found - wait and retry
-        logger.info(f"No photo found for {user_id}, waiting 7 seconds...")
-        await asyncio.sleep(7)  # Wait for photo to arrive
+        logger.info(f"No photo found for {user_id}, waiting 60 seconds...")
+        await asyncio.sleep(60)  # Wait for photo to arrive
         
         # Second attempt - check for photo again
         photo_path = find_latest_photo(device_serial, user_id, timestamp_str)
@@ -486,7 +486,7 @@ async def send_smart_notification(
         if photo_path:
             logger.info(f"Photo found after delay for {user_id}: {photo_path}")
         else:
-            logger.info(f"No photo found for {user_id} after delay, sending text-only notification")
+            logger.info(f"No photo found for {user_id} after 60 second delay, sending text-only notification")
         
         # Send notification (with or without photo)
         await telegram_notifier.send_attendance_notification(
@@ -529,7 +529,7 @@ def find_latest_photo(device_serial: str, user_id: str, timestamp_str: str) -> O
             # Sort by filename timestamp (most recent first)
             photos.sort(reverse=True)
             
-            # Find photo closest to attendance time (within 5 minutes)
+            # Find photo closest to attendance time (within 3 minutes)
             for photo in photos:
                 # Extract timestamp from filename: YYYYMMDDHHMISS-{user_id}.jpg
                 filename = os.path.basename(photo)
@@ -540,14 +540,14 @@ def find_latest_photo(device_serial: str, user_id: str, timestamp_str: str) -> O
                         photo_time = datetime.strptime(photo_time_str, "%Y%m%d%H%M%S")
                         time_diff = abs((attendance_time - photo_time).total_seconds())
                         
-                        # Return photo if within 5 minutes (300 seconds)
-                        if time_diff <= 300:
+                        # Return photo if within 3 minutes (180 seconds)
+                        if time_diff <= 180:
                             return photo
                     except ValueError:
                         continue
             
-            # If no photo within 5 minutes, return the most recent one
-            return photos[0]
+            # If no photo within 3 minutes, don't return old photos
+            # This prevents mixing up old photos with new attendance
             
         return None
     except Exception as e:
