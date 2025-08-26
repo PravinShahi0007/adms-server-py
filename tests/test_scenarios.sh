@@ -194,10 +194,14 @@ show_menu() {
     read -p "Enter choice [0-6]: " choice
 }
 
+# Detect script directory and set photo file path
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+PHOTO_FILE="$SCRIPT_DIR/IMG_1030.jpg"
+
 # Check if photo file exists
 if [ ! -f "$PHOTO_FILE" ]; then
     echo "❌ Error: Photo file '$PHOTO_FILE' not found!"
-    echo "💡 Please make sure '$PHOTO_FILE' exists in current directory"
+    echo "💡 Please make sure 'IMG_1030.jpg' exists in tests/ directory"
     exit 1
 fi
 

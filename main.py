@@ -381,8 +381,6 @@ async def catch_all(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    import threading
-    from tcp_server import start_tcp_server
     
     logger.info("Starting ZKTeco ADMS Push Server with enhanced logging")
     
