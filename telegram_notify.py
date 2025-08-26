@@ -5,7 +5,7 @@ from typing import Optional
 from datetime import datetime
 import httpx
 from sqlalchemy.orm import Session
-from models import Employee
+from models import Employee, AttendanceRecord
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +96,8 @@ class TelegramNotifier:
             employee_name = employee.name
             department = employee.department or "Unknown"
         
-        # Format attendance type
-        attendance_type = "🟢 เข้างาน" if in_out == 0 else "🔴 ออกงาน"
+        # Determine attendance type based on scan history for the day
+        attendance_type = self.determine_attendance_type(db, user_id, device_serial, timestamp)
         
         # Format verify method
         verify_methods = {
@@ -155,6 +155,27 @@ class TelegramNotifier:
                 await self.send_message(employee.telegram_chat_id, personal_message)
         
         return success
+
+    def determine_attendance_type(self, db: Session, user_id: str, device_serial: str, timestamp: datetime) -> str:
+        """Determine if this is check-in or check-out based on scan history for the day"""
+        from datetime import date
+        
+        # Get today's date from the timestamp
+        scan_date = timestamp.date()
+        
+        # Count existing scans for this user on this date (before current timestamp)
+        existing_scans = db.query(AttendanceRecord).filter(
+            AttendanceRecord.user_id == user_id,
+            AttendanceRecord.device_serial == device_serial,
+            AttendanceRecord.timestamp >= datetime.combine(scan_date, datetime.min.time()),
+            AttendanceRecord.timestamp < timestamp  # Before current scan
+        ).count()
+        
+        # Simple logic: Even count = เข้างาน (0, 2, 4...), Odd count = ออกงาน (1, 3, 5...)
+        if existing_scans % 2 == 0:
+            return "🟢 เข้างาน"
+        else:
+            return "🔴 ออกงาน"
 
 # Helper function to get employee by user_id
 def get_employee_by_user_id(db: Session, user_id: str) -> Optional[Employee]:
