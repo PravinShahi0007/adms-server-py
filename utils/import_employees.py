@@ -8,6 +8,9 @@ import re
 from datetime import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
+# Add parent directory to path for models import
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import Base, Employee
 
 def parse_employee_line(line):

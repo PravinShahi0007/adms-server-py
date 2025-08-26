@@ -112,14 +112,12 @@ class TelegramNotifier:
         # Format timestamp
         time_str = timestamp.strftime("%d/%m/%Y %H:%M:%S")
         
-        # Create notification message
+        # Create notification message (bot name will show the summary)
         message = f"""
 🏢 <b>แจ้งเตือนการลงเวลา</b>
-
 👤 <b>ชื่อ:</b> {employee_name}
 🏷️ <b>รหัส:</b> {user_id}
 🏢 <b>แผนก:</b> {department}
-
 {attendance_type}
 🕐 <b>เวลา:</b> {time_str}
 🔐 <b>วิธีสแกน:</b> {verify_method}
@@ -143,7 +141,6 @@ class TelegramNotifier:
         if employee and employee.telegram_chat_id:
             personal_message = f"""
 👋 <b>สวัสดี {employee.name}</b>
-
 {attendance_type} เรียบร้อยแล้ว
 🕐 <b>เวลา:</b> {time_str}
 🔐 <b>วิธีสแกน:</b> {verify_method}
