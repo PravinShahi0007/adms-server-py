@@ -11,9 +11,9 @@ import traceback
 from contextlib import asynccontextmanager
 
 # Import new services and utilities
-from services import NotificationService, PhotoService, DeviceService, AttendanceService, BackgroundTaskService
 from utils.config import config
 from utils.logging_setup import setup_logging
+from utils import container, event_bus, PhotoUploadedEvent
 
 # Lifespan event handler for startup/shutdown
 @asynccontextmanager
@@ -48,12 +48,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ZKTeco ADMS Push Server", version="1.0.0", lifespan=lifespan)
 
-# Initialize services
-notification_service = NotificationService()
-photo_service = PhotoService()
-device_service = DeviceService()
-attendance_service = AttendanceService(config.INTERNAL_API_URL)
-background_task_service = BackgroundTaskService(notification_service)
+# Initialize service container with dependency injection
+container.initialize()
+
+# Get services from DI container
+notification_service = container.get_notification_service()
+photo_service = container.get_photo_service()
+device_service = container.get_device_service()
+attendance_service = container.get_attendance_service()
+background_task_service = container.get_background_task_service()
+background_event_handlers = container.get_background_event_handlers()
 
 # Wrapper functions removed - calling services directly
 
@@ -193,7 +197,10 @@ async def cdata(request: Request, background_tasks: BackgroundTasks, SN: Optiona
             
             # Save photo and trigger notifications using BackgroundTasks
             saved_path = await photo_service.save_photo(photo_file, stamps, sn)
-            background_task_service.schedule_photo_notification_trigger(background_tasks, saved_path, stamps, sn)
+            background_tasks.add_task(
+                background_event_handlers.handle_photo_uploaded_sync,
+                saved_path, stamps, sn
+            )
             
             return PlainTextResponse("OK")
         else:
@@ -265,8 +272,14 @@ async def fdata(request: Request, SN: Optional[str] = None, table: Optional[str]
                 device_service.log_device_event(db, device_serial, "photo_upload", client_ip, 
                                f"Uploaded and saved photo: {photo_filename} -> {saved_path}")
                 
-                # Event-driven trigger: Check for pending notifications
-                await notification_service.trigger_pending_notifications(saved_path, photo_filename, device_serial, db)
+                # Event-driven trigger: Publish photo uploaded event
+                photo_event = PhotoUploadedEvent(
+                    saved_path=saved_path,
+                    photo_filename=photo_filename,
+                    device_serial=device_serial,
+                    timestamp=datetime.now()
+                )
+                await event_bus.publish_photo_uploaded(photo_event)
             else:
                 device_service.log_device_event(db, device_serial, "photo_upload_failed", client_ip, 
                                f"Failed to save photo: {photo_filename}")

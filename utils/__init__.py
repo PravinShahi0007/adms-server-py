@@ -7,8 +7,14 @@ to improve code organization and reusability.
 
 from .config import Config
 from .logging_setup import setup_logging
+from .dependency_injection import container
+from .events import event_bus, PhotoUploadedEvent, AttendanceRecordedEvent
 
 __all__ = [
     'Config',
-    'setup_logging'
+    'setup_logging',
+    'container',
+    'event_bus',
+    'PhotoUploadedEvent',
+    'AttendanceRecordedEvent'
 ]

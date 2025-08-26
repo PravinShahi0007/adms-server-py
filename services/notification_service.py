@@ -21,9 +21,10 @@ logger = logging.getLogger(__name__)
 class NotificationService:
     """Service for managing attendance notifications and photo matching"""
     
-    def __init__(self):
-        self.telegram_notifier = TelegramNotifier()
-        # Global in-memory store for pending notifications
+    def __init__(self, telegram_notifier: Optional[TelegramNotifier] = None):
+        # Use dependency injection for TelegramNotifier
+        self.telegram_notifier = telegram_notifier or TelegramNotifier()
+        # In-memory store for pending notifications
         # Key: user_id, Value: attendance data waiting for photo
         self.pending_notifications: Dict[str, Dict[str, Any]] = {}
         self.pending_notifications_lock = threading.Lock()
@@ -258,3 +259,23 @@ class NotificationService:
                 'created_at': datetime.now()
             }
         logger.info(f"Added pending notification for user {user_id}")
+    
+    async def handle_photo_uploaded_event(self, event):
+        """Event handler for photo uploaded events"""
+        from utils.events import PhotoUploadedEvent
+        if not isinstance(event, PhotoUploadedEvent):
+            return
+        
+        logger.info(f"Handling photo uploaded event for user {event.user_id}")
+        
+        # Use new DB session for event handling
+        db = SessionLocal()
+        try:
+            await self.trigger_pending_notifications(
+                event.saved_path, 
+                event.photo_filename, 
+                event.device_serial, 
+                db
+            )
+        finally:
+            db.close()
