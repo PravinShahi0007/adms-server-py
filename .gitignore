@@ -19,6 +19,7 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+photos
 
 # PyInstaller
 *.manifest
@@ -70,3 +71,4 @@ logs/
 # Database
 *.db
 *.sqlite
+IMG_1030.jpg

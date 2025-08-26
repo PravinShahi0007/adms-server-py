@@ -1,0 +1,183 @@
+# ZKTeco ADMS Event-Driven cURL Examples
+# =====================================
+
+# 🏥 Health Check
+curl -X GET "http://localhost:8080/health"
+
+# 📋 Scenario 1: Event-Driven (Photo after Attendance)
+# =====================================================
+
+# Step 1: Send attendance
+curl -X POST "http://localhost:8080/iclock/cdata?SN=TEST123" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t101\t2025-08-26 12:00:00\t1\t0\t0'
+
+# Step 2: Wait 3 seconds, then send photo (triggers Event-Driven)
+curl -X POST "http://localhost:8080/iclock/cdata" \
+     -F "sn=TEST123" \
+     -F "table=ATTPHOTO" \
+     -F "stamps=20250826120000-101.jpg" \
+     -F "photodata=@IMG_1030.jpg"
+
+# Expected: Immediate Telegram notification with photo (~3-5 seconds)
+
+# 📋 Scenario 2: Photo First (Instant Notification)
+# ==================================================
+
+# Step 1: Send photo first
+curl -X POST "http://localhost:8080/iclock/cdata" \
+     -F "sn=TEST123" \
+     -F "table=ATTPHOTO" \
+     -F "stamps=20250826120100-102.jpg" \
+     -F "photodata=@IMG_1030.jpg"
+
+# Step 2: Send attendance (finds photo, instant notification)
+curl -X POST "http://localhost:8080/iclock/cdata?SN=TEST123" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t102\t2025-08-26 12:01:00\t1\t0\t0'
+
+# Expected: Instant Telegram notification with photo
+
+# 📋 Scenario 3: 60-Second Timeout (Text-only)
+# ============================================
+
+# Send attendance only (NO photo)
+curl -X POST "http://localhost:8080/iclock/cdata?SN=TEST123" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t103\t2025-08-26 12:02:00\t1\t1\t0'
+
+# Expected: Text-only notification after 60 seconds (no photo)
+
+# 📋 Scenario 4: Rapid-Fire Multiple Users (Concurrent)
+# =====================================================
+
+# Launch multiple users simultaneously with different scenarios
+
+# User A: Event-Driven (attendance first, photo 2s later)
+curl -X POST "http://localhost:8080/iclock/cdata?SN=TEST123" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t201\t2025-08-26 12:10:00\t1\t0\t0' &
+
+sleep 2
+
+curl -X POST "http://localhost:8080/iclock/cdata" \
+     -F "sn=TEST123" \
+     -F "table=ATTPHOTO" \
+     -F "stamps=20250826121000-201.jpg" \
+     -F "photodata=@IMG_1030.jpg" &
+
+# User B: Photo first (photo then attendance 1s later)
+curl -X POST "http://localhost:8080/iclock/cdata" \
+     -F "sn=TEST123" \
+     -F "table=ATTPHOTO" \
+     -F "stamps=20250826121001-202.jpg" \
+     -F "photodata=@IMG_1030.jpg" &
+
+sleep 1
+
+curl -X POST "http://localhost:8080/iclock/cdata?SN=TEST123" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t202\t2025-08-26 12:10:01\t1\t1\t0' &
+
+# User C: Timeout (attendance only)
+curl -X POST "http://localhost:8080/iclock/cdata?SN=TEST123" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t203\t2025-08-26 12:10:02\t1\t0\t0' &
+
+wait
+
+# Expected: Multiple notifications with different timings
+
+# 🔧 Advanced Examples
+# ====================
+
+# Different verification modes
+curl -X POST "http://localhost:8080/iclock/cdata?SN=TEST123" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t999\t2025-08-26 12:00:00\t0\t0\t0'  # Password
+
+curl -X POST "http://localhost:8080/iclock/cdata?SN=TEST123" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t999\t2025-08-26 12:00:00\t1\t0\t0'  # Fingerprint
+
+curl -X POST "http://localhost:8080/iclock/cdata?SN=TEST123" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t999\t2025-08-26 12:00:00\t2\t0\t0'  # Face
+
+# Different in/out types  
+curl -X POST "http://localhost:8080/iclock/cdata?SN=TEST123" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t999\t2025-08-26 09:00:00\t1\t0\t0'  # Check In
+
+curl -X POST "http://localhost:8080/iclock/cdata?SN=TEST123" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t999\t2025-08-26 18:00:00\t1\t1\t0'  # Check Out
+
+curl -X POST "http://localhost:8080/iclock/cdata?SN=TEST123" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t999\t2025-08-26 12:00:00\t1\t2\t0'  # Break Out
+
+curl -X POST "http://localhost:8080/iclock/cdata?SN=TEST123" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t999\t2025-08-26 13:00:00\t1\t3\t0'  # Break In
+
+# Different devices
+curl -X POST "http://localhost:8080/iclock/cdata?SN=DEVICE_001" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t999\t2025-08-26 12:00:00\t1\t0\t0'
+
+curl -X POST "http://localhost:8080/iclock/cdata?SN=DEVICE_002" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t999\t2025-08-26 12:00:00\t1\t0\t0'
+
+# 📊 Performance Testing
+# ======================
+
+# Measure response times
+curl -X GET "http://localhost:8080/health" -w "\nResponse Time: %{time_total}s\n"
+
+curl -X POST "http://localhost:8080/iclock/cdata?SN=TEST123" \
+     -H "Content-Type: text/plain" \
+     --data $'ATTLOG\t999\t2025-08-26 12:00:00\t1\t0\t0' \
+     -w "\nAttendance Response Time: %{time_total}s\n"
+
+curl -X POST "http://localhost:8080/iclock/cdata" \
+     -F "sn=TEST123" \
+     -F "table=ATTPHOTO" \
+     -F "stamps=20250826120000-999.jpg" \
+     -F "photodata=@IMG_1030.jpg" \
+     -w "\nPhoto Response Time: %{time_total}s\n"
+
+# 🔍 Debugging
+# =============
+
+# Check logs while testing
+docker-compose logs app -f
+
+# View recent logs
+docker-compose logs app --tail 20
+
+# Check container status
+docker-compose ps
+
+# Check pending notifications in memory (via logs)
+# Look for: "Current pending notifications: ['user1', 'user2']"
+
+# ⚠️ Important Notes
+# ==================
+
+# 1. Photo filename format: YYYYMMDDHHMISS-USER_ID.jpg
+#    Example: 20250826120000-101.jpg
+
+# 2. Attendance data format: ATTLOG\tUSER_ID\tTIMESTAMP\tVERIFY_MODE\tIN_OUT\tWORKCODE
+#    Example: ATTLOG	101	2025-08-26 12:00:00	1	0	0
+
+# 3. Ensure IMG_1030.jpg exists in current directory
+
+# 4. Event-Driven timing:
+#    - Photo after attendance: ~3-5 second notification
+#    - Photo before attendance: Instant notification
+#    - No photo: 60-second timeout → text-only
+
+# 5. For production testing, change baseUrl to:
+#    http://172.31.30.159:8080
