@@ -13,6 +13,7 @@ services:
       - ENVIRONMENT=production
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_GROUP_CHAT_ID=${TELEGRAM_GROUP_CHAT_ID}
+      - TZ=Asia/Bangkok
     depends_on:
       - db
     volumes:
@@ -29,6 +30,7 @@ services:
       POSTGRES_DB: adms_db
       POSTGRES_USER: adms_user
       POSTGRES_PASSWORD: adms_password
+      TZ: Asia/Bangkok
     ports:
       - "5432:5432"
     volumes:
@@ -50,6 +52,7 @@ services:
       - "8081:8080"
     environment:
       ADMINER_DEFAULT_SERVER: db
+      TZ: Asia/Bangkok
     depends_on:
       - db
     restart: always

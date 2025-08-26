@@ -518,18 +518,35 @@ def find_latest_photo(device_serial: str, user_id: str, timestamp_str: str) -> O
         if not os.path.exists(photo_dir):
             return None
             
-        # Look for photos taken around the same time
+        # Look for photos with exact user_id match at the end of filename
         import glob
-        photos = glob.glob(f"{photo_dir}/*{user_id}*.jpg")
+        import re
         
-        if not photos:
-            # Look for any photo taken around the same time (within 1 minute)
-            attendance_time_str = attendance_time.strftime("%Y%m%d%H%M")
-            photos = glob.glob(f"{photo_dir}/{attendance_time_str}*.jpg")
-            
+        # First priority: Find photos that end with -{user_id}.jpg
+        photos = glob.glob(f"{photo_dir}/*-{user_id}.jpg")
+        
         if photos:
-            # Return the most recent photo
-            photos.sort(key=os.path.getmtime, reverse=True)
+            # Sort by filename timestamp (most recent first)
+            photos.sort(reverse=True)
+            
+            # Find photo closest to attendance time (within 5 minutes)
+            for photo in photos:
+                # Extract timestamp from filename: YYYYMMDDHHMISS-{user_id}.jpg
+                filename = os.path.basename(photo)
+                match = re.match(r'(\d{14})-\d+\.jpg', filename)
+                if match:
+                    photo_time_str = match.group(1)
+                    try:
+                        photo_time = datetime.strptime(photo_time_str, "%Y%m%d%H%M%S")
+                        time_diff = abs((attendance_time - photo_time).total_seconds())
+                        
+                        # Return photo if within 5 minutes (300 seconds)
+                        if time_diff <= 300:
+                            return photo
+                    except ValueError:
+                        continue
+            
+            # If no photo within 5 minutes, return the most recent one
             return photos[0]
             
         return None
