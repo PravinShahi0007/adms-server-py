@@ -76,7 +76,8 @@ class AttendanceService:
         raw_data: str, 
         background_tasks: BackgroundTasks,
         photo_service,
-        notification_service
+        notification_service,
+        background_task_service
     ) -> int:
         """Save attendance records to database and send Telegram notifications"""
         saved_count = 0
@@ -110,9 +111,9 @@ class AttendanceService:
                         
                         if photo_path:
                             # Photo exists - send immediately via background task
-                            background_tasks.add_task(
-                                notification_service.send_notification_with_photo,
-                                db, record['user_id'], device_serial,
+                            background_task_service.schedule_notification_with_photo(
+                                background_tasks,
+                                record['user_id'], device_serial,
                                 datetime.fromisoformat(record['timestamp'].replace(' ', 'T')),
                                 record['in_out'], record['verify_mode'], photo_path
                             )
@@ -132,8 +133,8 @@ class AttendanceService:
                             )
                             
                             # Queue timeout handler as background task
-                            background_tasks.add_task(
-                                notification_service.handle_notification_timeout_sync,
+                            background_task_service.schedule_notification_timeout(
+                                background_tasks,
                                 record['user_id'], device_serial,
                                 datetime.fromisoformat(record['timestamp'].replace(' ', 'T')),
                                 record['in_out'], record['verify_mode']

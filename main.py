@@ -11,7 +11,7 @@ import traceback
 from contextlib import asynccontextmanager
 
 # Import new services and utilities
-from services import NotificationService, PhotoService, DeviceService, AttendanceService
+from services import NotificationService, PhotoService, DeviceService, AttendanceService, BackgroundTaskService
 from utils.config import config
 from utils.logging_setup import setup_logging
 
@@ -53,18 +53,9 @@ notification_service = NotificationService()
 photo_service = PhotoService()
 device_service = DeviceService()
 attendance_service = AttendanceService(config.INTERNAL_API_URL)
+background_task_service = BackgroundTaskService(notification_service)
 
-def cleanup_expired_pending_notifications():
-    """Remove pending notifications older than 5 minutes"""
-    return notification_service.cleanup_expired_pending_notifications()
-
-async def trigger_pending_notifications(saved_path: str, photo_filename: str, device_serial: str, db):
-    """Event-driven trigger when a photo is uploaded - check for pending notifications"""
-    await notification_service.trigger_pending_notifications(saved_path, photo_filename, device_serial, db)
-
-def trigger_pending_notifications_sync(saved_path: str, photo_filename: str, device_serial: str):
-    """Event-driven trigger when a photo is uploaded - check for pending notifications (sync version for BackgroundTasks)"""
-    notification_service.trigger_pending_notifications_sync(saved_path, photo_filename, device_serial)
+# Wrapper functions removed - calling services directly
 
 # Request logging middleware
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -202,7 +193,7 @@ async def cdata(request: Request, background_tasks: BackgroundTasks, SN: Optiona
             
             # Save photo and trigger notifications using BackgroundTasks
             saved_path = await photo_service.save_photo(photo_file, stamps, sn)
-            background_tasks.add_task(trigger_pending_notifications_sync, saved_path, stamps, sn)
+            background_task_service.schedule_photo_notification_trigger(background_tasks, saved_path, stamps, sn)
             
             return PlainTextResponse("OK")
         else:
@@ -221,7 +212,7 @@ async def cdata(request: Request, background_tasks: BackgroundTasks, SN: Optiona
         if records:
             saved_count = await attendance_service.save_attendance_records(
                 db, records, device_serial, data_text, background_tasks, 
-                photo_service, notification_service
+                photo_service, notification_service, background_task_service
             )
             logger.info(f"Saved {saved_count} new attendance records")
             
@@ -275,7 +266,7 @@ async def fdata(request: Request, SN: Optional[str] = None, table: Optional[str]
                                f"Uploaded and saved photo: {photo_filename} -> {saved_path}")
                 
                 # Event-driven trigger: Check for pending notifications
-                await trigger_pending_notifications(saved_path, photo_filename, device_serial, db)
+                await notification_service.trigger_pending_notifications(saved_path, photo_filename, device_serial, db)
             else:
                 device_service.log_device_event(db, device_serial, "photo_upload_failed", client_ip, 
                                f"Failed to save photo: {photo_filename}")

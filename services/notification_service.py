@@ -89,66 +89,30 @@ class NotificationService:
             logger.error(f"Error in trigger_pending_notifications: {e}")
     
     def trigger_pending_notifications_sync(self, saved_path: str, photo_filename: str, device_serial: str):
-        """Event-driven trigger when a photo is uploaded - check for pending notifications (sync version for BackgroundTasks)"""
-        import re
+        """Event-driven trigger when a photo is uploaded (sync wrapper for BackgroundTasks)"""
+        import asyncio
         import time
         
+        # Small delay to ensure attendance records are processed first
+        time.sleep(0.1)
+        
+        # Create new event loop for background task
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
         try:
-            # Small delay to ensure attendance records are processed first in rapid-fire scenarios
-            time.sleep(0.1)
-            # Extract user_id from photo filename: YYYYMMDDHHMISS-{user_id}.jpg
-            match = re.match(r'\d{14}-(\d+)\.jpg', photo_filename)
-            if not match:
-                logger.debug(f"Could not extract user_id from photo filename: {photo_filename}")
-                return
-                
-            user_id = match.group(1)
-            logger.info(f"Background task: Photo uploaded for user {user_id}, checking pending notifications...")
-            
-            # Debug: Show current pending notifications
-            logger.info(f"Current pending notifications: {list(self.pending_notifications.keys())}")
-            logger.info(f"Looking for user_id: '{user_id}' (type: {type(user_id)})")
-            
-            # Check if this user has a pending notification (thread-safe)
-            with self.pending_notifications_lock:
-                if user_id in self.pending_notifications:
-                    pending_data = self.pending_notifications[user_id].copy()  # Copy data before releasing lock
-                    # Remove from pending notifications immediately
-                    del self.pending_notifications[user_id]
-                    found_pending = True
-                else:
-                    found_pending = False
-            
-            if found_pending:
-                logger.info(f"Found pending notification for user {user_id}, triggering immediate notification")
-                
-                # Create new event loop for background task
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                
-                # Send notification immediately with the new photo
-                loop.run_until_complete(self.telegram_notifier.send_attendance_notification(
-                    db=SessionLocal(),  # Create new session for background task
-                    user_id=user_id,
-                    device_serial=device_serial,
-                    timestamp=pending_data['attendance_time'],
-                    in_out=pending_data['in_out'],
-                    verify_mode=pending_data['verify_mode'],
-                    photo_path=saved_path
-                ))
-                
-                loop.close()
-                logger.info(f"Background task: Removed user {user_id} from pending notifications")
-            else:
-                logger.info(f"Background task: No pending notification found for user {user_id}")
-                logger.info(f"Available pending users: {list(self.pending_notifications.keys())}")
-                
+            # Use the async version with new DB session
+            from database import SessionLocal
+            db = SessionLocal()
+            loop.run_until_complete(self.trigger_pending_notifications(saved_path, photo_filename, device_serial, db))
+            db.close()
         except Exception as e:
             logger.error(f"Background task: Error in trigger_pending_notifications_sync: {e}")
+        finally:
+            loop.close()
     
     def send_notification_with_photo(
         self,
-        db: Session,
         user_id: str,
         device_serial: str, 
         timestamp: datetime,
@@ -156,12 +120,16 @@ class NotificationService:
         verify_mode: int,
         photo_path: str
     ):
-        """Send notification with photo (sync function for BackgroundTasks)"""
+        """Send notification with photo (sync wrapper for BackgroundTasks)"""
+        import asyncio
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
         try:
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
+            # Use new DB session for background task
+            from database import SessionLocal
+            db = SessionLocal()
             loop.run_until_complete(self.telegram_notifier.send_attendance_notification(
                 db=db,
                 user_id=user_id,
@@ -171,12 +139,13 @@ class NotificationService:
                 verify_mode=verify_mode,
                 photo_path=photo_path
             ))
-            
-            loop.close()
+            db.close()
             logger.info(f"Background task: Sent notification with photo for user {user_id}")
             
         except Exception as e:
             logger.error(f"Background task: Failed to send notification for user {user_id}: {e}")
+        finally:
+            loop.close()
     
     def handle_notification_timeout_sync(
         self,
@@ -186,8 +155,9 @@ class NotificationService:
         in_out: int,
         verify_mode: int
     ):
-        """Handle 10-second timeout for pending notifications (sync function for BackgroundTasks)"""
+        """Handle 10-second timeout for pending notifications (sync wrapper for BackgroundTasks)"""
         import time
+        import asyncio
         
         try:
             # Wait 10 seconds for photo to arrive
@@ -209,19 +179,24 @@ class NotificationService:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 
-                # Send text-only notification
-                loop.run_until_complete(self.telegram_notifier.send_attendance_notification(
-                    db=SessionLocal(),  # Create new session for background task
-                    user_id=user_id,
-                    device_serial=device_serial,
-                    timestamp=timestamp,
-                    in_out=in_out,
-                    verify_mode=verify_mode,
-                    photo_path=None
-                ))
-                
-                loop.close()
-                logger.info(f"Background task: Sent timeout notification for user {user_id}")
+                try:
+                    # Use new DB session for background task
+                    from database import SessionLocal
+                    db = SessionLocal()
+                    # Send text-only notification
+                    loop.run_until_complete(self.telegram_notifier.send_attendance_notification(
+                        db=db,
+                        user_id=user_id,
+                        device_serial=device_serial,
+                        timestamp=timestamp,
+                        in_out=in_out,
+                        verify_mode=verify_mode,
+                        photo_path=None
+                    ))
+                    db.close()
+                    logger.info(f"Background task: Sent timeout notification for user {user_id}")
+                finally:
+                    loop.close()
             else:
                 logger.info(f"Background task: Notification for {user_id} already sent via event trigger")
                 
