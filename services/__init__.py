@@ -10,11 +10,13 @@ from .photo_service import PhotoService
 from .device_service import DeviceService
 from .attendance_service import AttendanceService
 from .background_task_service import BackgroundTaskService
+from .telegram_service import TelegramNotifier
 
 __all__ = [
     'NotificationService',
     'PhotoService', 
     'DeviceService',
     'AttendanceService',
-    'BackgroundTaskService'
+    'BackgroundTaskService',
+    'TelegramNotifier'
 ]

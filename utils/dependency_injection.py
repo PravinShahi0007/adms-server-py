@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional
 from dataclasses import dataclass
 
 from utils.config import config
-from telegram_notify import TelegramNotifier
+from services.telegram_service import TelegramNotifier
 from .events import event_bus
 
 logger = logging.getLogger(__name__)

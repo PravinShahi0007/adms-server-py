@@ -13,7 +13,7 @@ from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 
 from database import SessionLocal
-from telegram_notify import TelegramNotifier
+from .telegram_service import TelegramNotifier
 
 logger = logging.getLogger(__name__)
 
