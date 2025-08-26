@@ -418,16 +418,17 @@ async def save_attendance_records(db: Session, records: list, device_serial: str
                 db.add(attendance_record)
                 saved_count += 1
                 
-                # Send Telegram notification for new attendance record
+                # Send Telegram notification with Smart Delay
                 try:
-                    await telegram_notifier.send_attendance_notification(
+                    await send_smart_notification(
                         db=db,
+                        telegram_notifier=telegram_notifier,
                         user_id=record['user_id'],
                         device_serial=device_serial,
                         timestamp=datetime.fromisoformat(record['timestamp'].replace(' ', 'T')),
                         in_out=record['in_out'],
                         verify_mode=record['verify_mode'],
-                        photo_path=find_latest_photo(device_serial, record['user_id'], record['timestamp'])
+                        timestamp_str=record['timestamp']
                     )
                 except Exception as e:
                     logger.error(f"Failed to send Telegram notification: {e}")
@@ -437,6 +438,58 @@ async def save_attendance_records(db: Session, records: list, device_serial: str
     
     db.commit()
     return saved_count
+
+async def send_smart_notification(
+    db: Session,
+    telegram_notifier,
+    user_id: str,
+    device_serial: str,
+    timestamp: datetime,
+    in_out: int,
+    verify_mode: int,
+    timestamp_str: str
+):
+    """Send notification with Smart Delay - immediate if photo exists, delayed retry if not"""
+    import asyncio
+    
+    # First attempt - check for photo immediately
+    photo_path = find_latest_photo(device_serial, user_id, timestamp_str)
+    
+    if photo_path:
+        # Photo found - send immediately
+        logger.info(f"Photo found immediately for {user_id}: {photo_path}")
+        await telegram_notifier.send_attendance_notification(
+            db=db,
+            user_id=user_id,
+            device_serial=device_serial,
+            timestamp=timestamp,
+            in_out=in_out,
+            verify_mode=verify_mode,
+            photo_path=photo_path
+        )
+    else:
+        # No photo found - wait and retry
+        logger.info(f"No photo found for {user_id}, waiting 7 seconds...")
+        await asyncio.sleep(7)  # Wait for photo to arrive
+        
+        # Second attempt - check for photo again
+        photo_path = find_latest_photo(device_serial, user_id, timestamp_str)
+        
+        if photo_path:
+            logger.info(f"Photo found after delay for {user_id}: {photo_path}")
+        else:
+            logger.info(f"No photo found for {user_id} after delay, sending text-only notification")
+        
+        # Send notification (with or without photo)
+        await telegram_notifier.send_attendance_notification(
+            db=db,
+            user_id=user_id,
+            device_serial=device_serial,
+            timestamp=timestamp,
+            in_out=in_out,
+            verify_mode=verify_mode,
+            photo_path=photo_path
+        )
 
 def find_latest_photo(device_serial: str, user_id: str, timestamp_str: str) -> Optional[str]:
     """Find the most recent photo for a user around the time of attendance"""
