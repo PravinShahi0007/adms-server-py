@@ -326,6 +326,404 @@ async def health_check(db: Session = Depends(get_db)):
     }
 
 
+async def save_attendance_records(db: Session, records: list, device_serial: str, raw_data: str, background_tasks: BackgroundTasks) -> int:
+    """Save attendance records to database and send Telegram notifications"""
+    saved_count = 0
+    
+    for record in records:
+        try:
+            # Check for duplicate record
+            existing = db.query(AttendanceRecord).filter(
+                AttendanceRecord.device_serial == device_serial,
+                AttendanceRecord.user_id == record['user_id'],
+                AttendanceRecord.timestamp == datetime.fromisoformat(record['timestamp'].replace(' ', 'T'))
+            ).first()
+            
+            if not existing:
+                attendance_record = AttendanceRecord(
+                    device_serial=device_serial,
+                    user_id=record['user_id'],
+                    timestamp=datetime.fromisoformat(record['timestamp'].replace(' ', 'T')),
+                    verify_mode=record['verify_mode'],
+                    in_out=record['in_out'],
+                    workcode=record['workcode'],
+                    raw_data=raw_data
+                )
+                db.add(attendance_record)
+                saved_count += 1
+                
+                # Send Telegram notification using BackgroundTasks (non-blocking)
+                try:
+                    # Quick check for immediate photo
+                    photo_path = find_latest_photo(device_serial, record['user_id'], record['timestamp'])
+                    
+                    if photo_path:
+                        # Photo exists - send immediately via background task
+                        background_tasks.add_task(
+                            send_notification_with_photo,
+                            db, record['user_id'], device_serial,
+                            datetime.fromisoformat(record['timestamp'].replace(' ', 'T')),
+                            record['in_out'], record['verify_mode'], photo_path
+                        )
+                        logger.info(f"Queued immediate notification with photo for user {record['user_id']}")
+                    else:
+                        # No photo - store in pending notifications for event-driven trigger
+                        logger.info(f"No photo found for {record['user_id']}, adding to pending notifications...")
+                        
+                        with pending_notifications_lock:
+                            pending_notifications[record['user_id']] = {
+                                'attendance_time': datetime.fromisoformat(record['timestamp'].replace(' ', 'T')),
+                                'device_serial': device_serial,
+                                'timestamp_str': record['timestamp'],
+                                'in_out': record['in_out'],
+                                'verify_mode': record['verify_mode'],
+                                'db': db,
+                                'created_at': datetime.now()
+                            }
+                        
+                        # Queue timeout handler as background task
+                        background_tasks.add_task(
+                            handle_notification_timeout_sync,
+                            record['user_id'], device_serial,
+                            datetime.fromisoformat(record['timestamp'].replace(' ', 'T')),
+                            record['in_out'], record['verify_mode']
+                        )
+                        
+                except Exception as e:
+                    logger.error(f"Failed to process notification for user {record['user_id']}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Failed to save attendance record: {e}")
+    
+    db.commit()
+    return saved_count
+
+async def send_smart_notification(
+    db: Session,
+    telegram_notifier,
+    user_id: str,
+    device_serial: str,
+    timestamp: datetime,
+    in_out: int,
+    verify_mode: int,
+    timestamp_str: str
+):
+    """Send notification with Smart Delay - immediate if photo exists, delayed retry if not"""
+    import asyncio
+    from datetime import datetime
+    
+    # First attempt - check for photo immediately
+    photo_path = find_latest_photo(device_serial, user_id, timestamp_str)
+    
+    if photo_path:
+        # Photo found - send immediately
+        logger.info(f"Photo found immediately for {user_id}: {photo_path}")
+        await telegram_notifier.send_attendance_notification(
+            db=db,
+            user_id=user_id,
+            device_serial=device_serial,
+            timestamp=timestamp,
+            in_out=in_out,
+            verify_mode=verify_mode,
+            photo_path=photo_path
+        )
+    else:
+        # No photo found - store in pending notifications for event-driven trigger
+        logger.info(f"No photo found for {user_id}, adding to pending notifications...")
+        
+        # Store attendance data for later processing when photo arrives
+        pending_notifications[user_id] = {
+            'attendance_time': timestamp,
+            'device_serial': device_serial,
+            'timestamp_str': timestamp_str,
+            'in_out': in_out,
+            'verify_mode': verify_mode,
+            'db': db,
+            'created_at': datetime.now()
+        }
+        
+        # Create background task for timeout handling (non-blocking)
+        asyncio.create_task(handle_notification_timeout(
+            user_id, telegram_notifier, db, device_serial, timestamp, in_out, verify_mode
+        ))
+
+def send_notification_with_photo(
+    db: Session,
+    user_id: str,
+    device_serial: str, 
+    timestamp: datetime,
+    in_out: int,
+    verify_mode: int,
+    photo_path: str
+):
+    """Send notification with photo (sync function for BackgroundTasks)"""
+    try:
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        loop.run_until_complete(telegram_notifier.send_attendance_notification(
+            db=db,
+            user_id=user_id,
+            device_serial=device_serial,
+            timestamp=timestamp,
+            in_out=in_out,
+            verify_mode=verify_mode,
+            photo_path=photo_path
+        ))
+        
+        loop.close()
+        logger.info(f"Background task: Sent notification with photo for user {user_id}")
+        
+    except Exception as e:
+        logger.error(f"Background task: Failed to send notification for user {user_id}: {e}")
+
+def handle_notification_timeout_sync(
+    user_id: str,
+    device_serial: str,
+    timestamp: datetime,
+    in_out: int,
+    verify_mode: int
+):
+    """Handle 60-second timeout for pending notifications (sync function for BackgroundTasks)"""
+    import asyncio
+    import time
+    
+    try:
+        # Wait 10 seconds for photo to arrive
+        time.sleep(10)
+        
+        # Check if still pending (photo might have arrived and removed it) - thread-safe
+        with pending_notifications_lock:
+            if user_id in pending_notifications:
+                # Remove from pending before processing
+                del pending_notifications[user_id]
+                should_send_notification = True
+            else:
+                should_send_notification = False
+                
+        if should_send_notification:
+            logger.info(f"No photo arrived for {user_id} after 10 seconds, sending text-only notification")
+            
+            # Create new event loop for this background task
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Send text-only notification
+            loop.run_until_complete(telegram_notifier.send_attendance_notification(
+                db=SessionLocal(),  # Create new session for background task
+                user_id=user_id,
+                device_serial=device_serial,
+                timestamp=timestamp,
+                in_out=in_out,
+                verify_mode=verify_mode,
+                photo_path=None
+            ))
+            
+            loop.close()
+            logger.info(f"Background task: Sent timeout notification for user {user_id}")
+        else:
+            logger.info(f"Background task: Notification for {user_id} already sent via event trigger")
+            
+    except Exception as e:
+        logger.error(f"Background task: Failed timeout handling for user {user_id}: {e}")
+
+async def handle_notification_timeout(
+    user_id: str,
+    telegram_notifier,
+    db: Session,
+    device_serial: str,
+    timestamp: datetime,
+    in_out: int,
+    verify_mode: int
+):
+    """Handle 60-second timeout for pending notifications (legacy async version)"""
+    import asyncio
+    
+    # Wait 60 seconds
+    await asyncio.sleep(60)
+    
+    # Check if still pending (photo might have arrived and removed it)
+    if user_id in pending_notifications:
+        logger.info(f"No photo arrived for {user_id} after 60 seconds, sending text-only notification")
+        # Remove from pending
+        del pending_notifications[user_id]
+        
+        # Send text-only notification
+        await telegram_notifier.send_attendance_notification(
+            db=db,
+            user_id=user_id,
+            device_serial=device_serial,
+            timestamp=timestamp,
+            in_out=in_out,
+            verify_mode=verify_mode,
+            photo_path=None
+        )
+    else:
+        logger.info(f"Notification for {user_id} already sent via event trigger")
+
+def find_latest_photo(device_serial: str, user_id: str, timestamp_str: str) -> Optional[str]:
+    """Find the most recent photo for a user around the time of attendance"""
+    try:
+        # Parse timestamp
+        attendance_time = datetime.fromisoformat(timestamp_str.replace(' ', 'T'))
+        date_str = attendance_time.strftime("%Y-%m-%d")
+        
+        # Check photos directory
+        env = os.getenv("ENVIRONMENT", "local")
+        if env == "production":
+            photo_base = "/app/photos"
+        else:
+            photo_base = "/app/photos"
+            
+        photo_dir = f"{photo_base}/{device_serial}/{date_str}"
+        
+        if not os.path.exists(photo_dir):
+            return None
+            
+        # Look for photos with exact user_id match at the end of filename
+        import glob
+        import re
+        
+        # First priority: Find photos that end with -{user_id}.jpg
+        photos = glob.glob(f"{photo_dir}/*-{user_id}.jpg")
+        
+        if photos:
+            # Sort by filename timestamp (most recent first)
+            photos.sort(reverse=True)
+            
+            # Find photo closest to attendance time (within 3 minutes)
+            for photo in photos:
+                # Extract timestamp from filename: YYYYMMDDHHMISS-{user_id}.jpg
+                filename = os.path.basename(photo)
+                match = re.match(r'(\d{14})-\d+\.jpg', filename)
+                if match:
+                    photo_time_str = match.group(1)
+                    try:
+                        photo_time = datetime.strptime(photo_time_str, "%Y%m%d%H%M%S")
+                        time_diff = abs((attendance_time - photo_time).total_seconds())
+                        
+                        # Return photo if within 3 minutes (180 seconds)
+                        if time_diff <= 180:
+                            return photo
+                    except ValueError:
+                        continue
+            
+            # If no photo within 3 minutes, don't return old photos
+            # This prevents mixing up old photos with new attendance
+            
+        return None
+    except Exception as e:
+        logger.error(f"Error finding photo: {e}")
+        return None
+
+async def save_photo(photo_file, photo_filename: str, device_serial: str) -> Optional[str]:
+    """Save photo from form upload data"""
+    try:
+        if not photo_file:
+            logger.error("No photo file provided")
+            return None
+            
+        # Read photo content
+        photo_data = await photo_file.read()
+        
+        # Create directory structure: photos/device_serial/YYYY-MM-DD/
+        from datetime import datetime
+        import re
+        
+        # Extract timestamp from filename: YYYYMMDDHHMISS-XX.jpg
+        match = re.match(r'(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})-(\d+)\.jpg', photo_filename)
+        if match:
+            year, month, day = match.groups()[:3]
+            date_folder = f"{year}-{month}-{day}"
+        else:
+            # Fallback to current date
+            date_folder = datetime.now().strftime("%Y-%m-%d")
+        
+        photo_dir = f"photos/{device_serial}/{date_folder}"
+        os.makedirs(photo_dir, exist_ok=True)
+        
+        # Save photo file
+        photo_path = f"{photo_dir}/{photo_filename}"
+        with open(photo_path, 'wb') as f:
+            f.write(photo_data)
+        
+        logger.info(f"Saved photo: {photo_path}")
+        return photo_path
+        
+    except Exception as e:
+        logger.error(f"Error saving photo: {e}")
+        return None
+
+async def save_photo_file(raw_data: bytes, device_serial: str, photo_filename: str, photo_info: dict) -> Optional[str]:
+    """Save photo file to NAS storage"""
+    import re
+    
+    try:
+        # Find where JPEG data starts (after metadata lines)
+        data_text = raw_data.decode('utf-8', errors='ignore')
+        jpeg_start = data_text.find('\x00\xff\xd8\xff')  # JPEG file signature
+        
+        if jpeg_start == -1:
+            # Alternative search for JPEG header
+            jpeg_start = raw_data.find(b'\xff\xd8\xff')
+            if jpeg_start != -1:
+                jpeg_data = raw_data[jpeg_start:]
+            else:
+                logger.error(f"Could not find JPEG data in photo upload")
+                return None
+        else:
+            jpeg_data = raw_data[jpeg_start + 1:]  # Skip the null byte
+        
+        # Create directory structure: photos/device_serial/YYYY-MM-DD/
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        # Use different photo storage path based on environment
+        env = os.getenv("ENVIRONMENT", "local")
+        if env == "production":
+            photo_base = "/app/photos"  # Maps to /mnt/kpspdrive/attendance_photo
+        else:
+            photo_base = "/app/photos"  # Maps to ./photos for local
+            
+        photo_dir = f"{photo_base}/{device_serial}/{today}"
+        
+        # Create directory if it doesn't exist
+        os.makedirs(photo_dir, exist_ok=True)
+        
+        # Clean filename for filesystem
+        safe_filename = re.sub(r'[^\w\-_.]', '_', photo_filename)
+        if not safe_filename.lower().endswith('.jpg'):
+            safe_filename += '.jpg'
+        
+        photo_path = f"{photo_dir}/{safe_filename}"
+        
+        # Save JPEG data to file
+        with open(photo_path, 'wb') as f:
+            f.write(jpeg_data)
+        
+        logger.info(f"Saved photo: {photo_path} ({len(jpeg_data)} bytes)")
+        return photo_path
+        
+    except Exception as e:
+        logger.error(f"Failed to save photo file: {e}")
+        return None
+
+def log_device_event(db: Session, device_serial: str, event_type: str, 
+                    ip_address: str, message: str):
+    """Log device events"""
+    try:
+        device_log = DeviceLog(
+            device_serial=device_serial or "unknown",
+            event_type=event_type,
+            ip_address=ip_address,
+            message=message
+        )
+        db.add(device_log)
+        db.commit()
+    except Exception as e:
+        logger.error(f"Failed to log device event: {e}")
+
 # Custom exception handler for invalid HTTP requests
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
