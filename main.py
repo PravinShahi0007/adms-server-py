@@ -73,24 +73,31 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 except Exception as e:
                     logger.warning(f"[{client_ip}] Could not read request body: {e}")
             
-            # Enhanced logging for all requests
-            logger.info(f"[{client_ip}] {method} {url}")
-            logger.info(f"[{client_ip}] Headers: {headers}")
-            
-            if body:
-                # Log body content safely
-                try:
-                    body_text = body.decode('utf-8', errors='replace')
-                    logger.info(f"[{client_ip}] Body ({len(body)} bytes): {repr(body_text[:500])}")
-                except Exception:
-                    logger.info(f"[{client_ip}] Body ({len(body)} bytes): [binary data]")
+            # Selective logging - skip health checks and routine heartbeats
+            if "/health" not in str(url) and "/iclock/getrequest" not in str(url):
+                logger.info(f"[{client_ip}] {method} {url}")
+                logger.debug(f"[{client_ip}] Headers: {headers}")
+                
+                if body:
+                    # Log body content safely
+                    try:
+                        body_text = body.decode('utf-8', errors='replace')
+                        logger.info(f"[{client_ip}] Body ({len(body)} bytes): {repr(body_text[:500])}")
+                    except Exception:
+                        logger.info(f"[{client_ip}] Body ({len(body)} bytes): [binary data]")
+            else:
+                # Minimal logging for routine requests
+                logger.debug(f"[{client_ip}] {method} {url}")
             
             # Process request
             response = await call_next(request)
             
-            # Log response
+            # Log response - skip routine requests
             duration = (datetime.now() - start_time).total_seconds() * 1000
-            logger.info(f"[{client_ip}] {method} {url} -> {response.status_code} ({duration:.2f}ms)")
+            if "/health" not in str(url) and "/iclock/getrequest" not in str(url):
+                logger.info(f"[{client_ip}] {method} {url} -> {response.status_code} ({duration:.2f}ms)")
+            else:
+                logger.debug(f"[{client_ip}] {method} {url} -> {response.status_code} ({duration:.2f}ms)")
             
             return response
             
@@ -140,7 +147,8 @@ async def get_request(request: Request, SN: Optional[str] = None, db: Session = 
     Handle device heartbeat and command requests
     Device periodically calls this to check for pending commands
     """
-    logger.info(f"Device heartbeat from SN: {SN}")
+    # Device heartbeat (reduced logging)
+    logger.debug(f"Device heartbeat from SN: {SN}")
     client_ip = request.client.host
     
     # Log device activity
