@@ -28,7 +28,7 @@ class TelegramNotifier:
                     json={
                         "chat_id": chat_id,
                         "text": message,
-                        "parse_mode": "HTML"
+                        "parse_mode": "MarkdownV2"
                     },
                     timeout=10.0
                 )
@@ -57,7 +57,7 @@ class TelegramNotifier:
                     data = {
                         "chat_id": chat_id,
                         "caption": caption,
-                        "parse_mode": "HTML"
+                        "parse_mode": "MarkdownV2"
                     }
                     
                     response = await client.post(
@@ -109,20 +109,33 @@ class TelegramNotifier:
         }
         verify_method = verify_methods.get(verify_mode, f"อื่นๆ ({verify_mode})")
         
-        # Format timestamp
+        # Format timestamps
         time_str = timestamp.strftime("%d/%m/%Y %H:%M:%S")
+        time_short = timestamp.strftime("%H:%M")
+        date_short = timestamp.strftime("%d/%m")
         
-        # Create notification message (bot name will show the summary)
-        message = f"""
-🏢 <b>แจ้งเตือนการลงเวลา</b>
-👤 <b>ชื่อ:</b> {employee_name}
-🏷️ <b>รหัส:</b> {user_id}
-🏢 <b>แผนก:</b> {department}
-{attendance_type}
-🕐 <b>เวลา:</b> {time_str}
-🔐 <b>วิธีสแกน:</b> {verify_method}
-📱 <b>เครื่อง:</b> {device_serial}
-        """.strip()
+        # Escape special characters for MarkdownV2
+        def escape_md(text):
+            special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+            for char in special_chars:
+                text = text.replace(char, '\\' + char)
+            return text
+        
+        # Determine attendance action for display
+        attendance_action = "เข้างาน" if "เข้างาน" in attendance_type else "ออกงาน"
+        attendance_emoji = "🟢" if "เข้างาน" in attendance_type else "🔴"
+        
+        # Create notification message with compact Thai layout format
+        message = f"""{attendance_action} {attendance_emoji} *{escape_md(employee_name)}* \\({escape_md(time_short)} {escape_md(date_short)}\\)
+
+รายละเอียด
+• 👤 ชื่อ: *{escape_md(employee_name)}*
+• 🏷️ รหัส: `{escape_md(user_id)}`
+• 🏢 แผนก: *{escape_md(department)}*
+• 📍 สถานะ: *{escape_md(attendance_action)}* {attendance_emoji}
+• 🕐 เวลา: *{escape_md(time_str)}*
+• 🔐 วิธีสแกน: *{escape_md(verify_method)}*
+• 📱 เครื่อง: `{escape_md(device_serial)}`"""
         
         if not self.group_chat_id:
             logger.warning("Telegram group chat ID not configured")
@@ -139,12 +152,12 @@ class TelegramNotifier:
         
         # Also send to personal chat if configured
         if employee and employee.telegram_chat_id:
-            personal_message = f"""
-👋 <b>สวัสดี {employee.name}</b>
-{attendance_type} เรียบร้อยแล้ว
-🕐 <b>เวลา:</b> {time_str}
-🔐 <b>วิธีสแกน:</b> {verify_method}
-            """.strip()
+            personal_message = f"""{attendance_action} {attendance_emoji} *{escape_md(employee.name)}* \\({escape_md(time_short)} {escape_md(date_short)}\\)
+
+👋 สวัสดี {escape_md(employee.name)}
+• 📍 สถานะ: *{escape_md(attendance_action)}* {attendance_emoji}
+• 🕐 เวลา: *{escape_md(time_str)}*
+• 🔐 วิธีสแกน: *{escape_md(verify_method)}*"""
             
             if photo_path and os.path.exists(photo_path):
                 await self.send_photo(employee.telegram_chat_id, photo_path, personal_message)
