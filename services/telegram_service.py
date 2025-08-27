@@ -126,8 +126,8 @@ class TelegramNotifier:
         attendance_emoji = "🟢" if "เข้างาน" in attendance_type else "🔴"
         
         # Create notification message with compact Thai layout format
-        message = f"""{attendance_action} {attendance_emoji} *{escape_md(employee_name)}* \\({escape_md(time_short)} {escape_md(date_short)}\\)
-
+        message = f"""*{escape_md(employee_name)}* {attendance_action} {attendance_emoji} เมื่อเวลา \\({escape_md(time_short)} {escape_md(date_short)}\\)
+  
 รายละเอียด
 👤 ชื่อ: *{escape_md(employee_name)}*
 🏷️ รหัส: `{escape_md(user_id)}`
@@ -136,7 +136,7 @@ class TelegramNotifier:
 🕐 เวลา: *{escape_md(time_str)}*
 🔐 วิธีสแกน: *{escape_md(verify_method)}*
 📱 เครื่อง: `{escape_md(device_serial)}`
-`V3.0.1`"""
+`V3.0.2`"""
         
         if not self.group_chat_id:
             logger.warning("Telegram group chat ID not configured")
