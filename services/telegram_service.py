@@ -116,7 +116,7 @@ class TelegramNotifier:
         
         # Escape special characters for MarkdownV2
         def escape_md(text):
-            special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+            special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '!']
             for char in special_chars:
                 text = text.replace(char, '\\' + char)
             return text
@@ -129,13 +129,14 @@ class TelegramNotifier:
         message = f"""{attendance_action} {attendance_emoji} *{escape_md(employee_name)}* \\({escape_md(time_short)} {escape_md(date_short)}\\)
 
 รายละเอียด
-• 👤 ชื่อ: *{escape_md(employee_name)}*
-• 🏷️ รหัส: `{escape_md(user_id)}`
-• 🏢 แผนก: *{escape_md(department)}*
-• 📍 สถานะ: *{escape_md(attendance_action)}* {attendance_emoji}
-• 🕐 เวลา: *{escape_md(time_str)}*
-• 🔐 วิธีสแกน: *{escape_md(verify_method)}*
-• 📱 เครื่อง: `{escape_md(device_serial)}`"""
+👤 ชื่อ: *{escape_md(employee_name)}*
+🏷️ รหัส: `{escape_md(user_id)}`
+🏢 แผนก: *{escape_md(department)}*
+📍 สถานะ: *{escape_md(attendance_action)}* {attendance_emoji}
+🕐 เวลา: *{escape_md(time_str)}*
+🔐 วิธีสแกน: *{escape_md(verify_method)}*
+📱 เครื่อง: `{escape_md(device_serial)}`
+`V3.0.1`"""
         
         if not self.group_chat_id:
             logger.warning("Telegram group chat ID not configured")
@@ -155,9 +156,9 @@ class TelegramNotifier:
             personal_message = f"""{attendance_action} {attendance_emoji} *{escape_md(employee.name)}* \\({escape_md(time_short)} {escape_md(date_short)}\\)
 
 👋 สวัสดี {escape_md(employee.name)}
-• 📍 สถานะ: *{escape_md(attendance_action)}* {attendance_emoji}
-• 🕐 เวลา: *{escape_md(time_str)}*
-• 🔐 วิธีสแกน: *{escape_md(verify_method)}*"""
+📍 สถานะ: *{escape_md(attendance_action)}* {attendance_emoji}
+🕐 เวลา: *{escape_md(time_str)}*
+🔐 วิธีสแกน: *{escape_md(verify_method)}*"""
             
             if photo_path and os.path.exists(photo_path):
                 await self.send_photo(employee.telegram_chat_id, photo_path, personal_message)
